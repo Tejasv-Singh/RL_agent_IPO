@@ -1,0 +1,13 @@
+# Byte-compiled / cache files
+__pycache__/
+*.pyc
+*~
+# Virtual environment
+venv/
+# Logs/output
+logs/
+# Other
+.env
+*.pkl
+*.zip
+.DS_Store
