@@ -10,13 +10,17 @@ def annualized_return(wealth: np.ndarray, periods_per_year: int = 252) -> float:
     Returns:
         Annualized return as a float
     """
-    if len(wealth) < 2 or wealth[0] == 0:
+    if len(wealth) < 2 or wealth[0] <= 0:
         return 0.0
-    total_return = wealth[-1] / wealth[0] - 1.0
     num_years = len(wealth) / periods_per_year
     if num_years == 0:
         return 0.0
-    return (wealth[-1] / wealth[0]) ** (1 / num_years) - 1.0
+    ratio = wealth[-1] / wealth[0]
+    # If ratio is negative, result of exponentiation is NaN. Cap at 0.
+    # This effectively caps the total return at -100%.
+    if ratio < 0:
+        ratio = 0
+    return ratio ** (1 / num_years) - 1.0
 
 def sharpe_ratio(returns: np.ndarray, risk_free: float = 0.0, periods_per_year: int = 252) -> float:
     """
