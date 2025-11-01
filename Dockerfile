@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --no-deps -r requirements.txt
 
 # Copy the rest of the application's code into the container
 COPY . .
@@ -17,8 +17,8 @@ COPY . .
 EXPOSE 8501
 
 # Define environment variable
-ENV STREAMLIT_SERVER_PORT 8501
-ENV STREAMLIT_SERVER_ADDRESS 0.0.0.0
+ENV STREAMLIT_SERVER_PORT=8501
+ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 # Run dashboard.py when the container launches
 CMD ["streamlit", "run", "dashboard.py"]
