@@ -1,3 +1,4 @@
+import sys
 import streamlit as st
 import subprocess
 import os
@@ -110,7 +111,7 @@ elif page == "Training":
             st.info("⏳ Training started in background...")
             
             cmd = [
-                "python", "train_ppo_quant.py",
+                sys.executable, "train_ppo_quant.py",
                 "--timesteps", str(timesteps),
                 "--M", str(m_ipos),
                 "--capital", str(capital),

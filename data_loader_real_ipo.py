@@ -10,7 +10,7 @@ import argparse
 import streamlit as st
 import subprocess
 import glob
-
+import sys
 from data_loader_real_ipo import RealIPODataLoader
 
 class QuantIPOEnv(gym.Env):
@@ -323,7 +323,8 @@ elif page == "Training":
         
         if submitted:
             cmd = [
-                "python", "train_ppo_quant.py",
+                sys.executable, "train_ppo_quant.py",
+                # "python", "train_ppo_quant.py",
                 "--timesteps", str(timesteps),
                 "--M", str(m_ipos),
                 "--capital", str(capital),
