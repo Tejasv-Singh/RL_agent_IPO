@@ -23,16 +23,16 @@ if page == "Home":
     st.header("Welcome to IPO Allocation AI")
     st.write("""
     This dashboard helps you:
-    - 📊 Explore real IPO data
-    - 🏋️ Train a PPO reinforcement learning agent
-    - 📈 Backtest trained models
-    - 💰 Get AI-powered IPO allocation recommendations
+    - Explore real IPO data
+    - Train a PPO reinforcement learning agent
+    - Backtest trained models
+    - Get AI-powered IPO allocation recommendations
     """)
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Models", len(glob.glob("logs/**/*.zip", recursive=True)))
     col2.metric("Total Backtests", len(glob.glob("logs/backtest/*.png", recursive=True)))
-    col3.metric("Status", "✅ Ready")
+    col3.metric("Status", "Ready")
 
 # ===== DATA EXPLORER PAGE =====
 elif page == "Data Explorer":
@@ -105,13 +105,16 @@ elif page == "Training":
                     f.write(uploaded_file.getbuffer())
         
         delayed_reward = st.checkbox("Enable Delayed Reward Mode")
+        esg = st.checkbox("Enable esg")
         submitted = st.form_submit_button("Start Training")
         
         if submitted:
-            st.info("⏳ Training started in background...")
+            st.info("Training started...")
+            progress_bar = st.progress(0)
+            output_placeholder = st.empty()
             
             cmd = [
-                sys.executable, "train_ppo_quant.py",
+                "python", "-u", "train_ppo_quant.py",
                 "--timesteps", str(timesteps),
                 "--M", str(m_ipos),
                 "--capital", str(capital),
@@ -126,20 +129,36 @@ elif page == "Training":
             
             if delayed_reward:
                 cmd.append("--delayed_reward")
-            
+
+            full_output = ""
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 
-                if result.returncode == 0:
+                while True:
+                    line = process.stdout.readline()
+                    if not line:
+                        break
+                    
+                    full_output += line
+                    output_placeholder.code(full_output)
+                    
+                    if "total_timesteps" in line:
+                        try:
+                            # Extract the number after "total_timesteps |"
+                            current_timesteps = int(line.split("total_timesteps")[1].split("|")[1].strip())
+                            progress = min(1.0, current_timesteps / timesteps)
+                            progress_bar.progress(progress)
+                        except (ValueError, IndexError):
+                            pass # Ignore parsing errors
+
+                process.wait(timeout=3600)
+
+                if process.returncode == 0:
                     st.success("Training completed successfully!")
                     st.info(f"Model saved to: {save_dir}")
-                    
-                    # Show training output
-                    if result.stdout:
-                        with st.expander("Training Output"):
-                            st.code(result.stdout)
+                    progress_bar.progress(1.0)
                 else:
-                    st.error(f"Training failed:\n{result.stderr}")
+                    st.error(f"Training failed. See output above for details.")
                     
             except subprocess.TimeoutExpired:
                 st.error("Training timeout (>1 hour)")
@@ -200,21 +219,18 @@ elif page == "Backtesting":
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
                 
-                if result.returncode == 0:
-                    st.success("✅ Backtest completed!")
+                st.success("Backtest completed!")
+                
+                # Display backtest output
+                with st.expander("Backtest Output"):
+                    st.code(result.stdout)
+                
+                # Look for generated PNG
+                png_files = glob.glob(os.path.join(logdir, "*.png"))
+                if png_files:
+                    latest_png = max(png_files, key=os.path.getctime)
+                    st.image(latest_png, caption="Average Wealth Path", use_container_width=True)
                     
-                    # Display backtest output
-                    with st.expander("Backtest Output"):
-                        st.code(result.stdout)
-                    
-                    # Look for generated PNG
-                    png_files = glob.glob(os.path.join(logdir, "*.png"))
-                    if png_files:
-                        latest_png = max(png_files, key=os.path.getctime)
-                        st.image(latest_png, caption="Average Wealth Path", use_container_width=True)
-                    
-                else:
-                    st.error(f"Backtest failed:\n{result.stderr}")
                     
             except subprocess.TimeoutExpired:
                 st.error("Backtest timeout (>10 min)")
@@ -223,7 +239,7 @@ elif page == "Backtesting":
 
 # ===== ALLOCATION ADVISOR PAGE =====
 elif page == "Allocation Advisor":
-    st.header("💰 AI-Powered IPO Allocation Advisor")
+    st.header("AI-Powered IPO Allocation Advisor")
     st.write("Get AI recommendations for IPO allocation using your trained model.")
     
     # Find available models
