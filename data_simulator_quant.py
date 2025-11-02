@@ -12,6 +12,9 @@ class IPODataSimulator:
         feature_dim: number of features per IPO
         seed: random seed for reproducibility
         """
+        if seed is None:
+             seed = np.random.randint(0, 1_000_000)
+        self.rs = np.random.RandomState(seed)
         self.M = M
         self.feature_dim = feature_dim
         self.rs = np.random.RandomState(seed)
