@@ -2,142 +2,328 @@ import streamlit as st
 import subprocess
 import os
 import glob
-import time
+import pandas as pd
+import json
+import numpy as np
+import matplotlib.pyplot as plt
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from env_quant import QuantIPOEnv
 
-st.set_page_config(page_title="Quant IPO RL Dashboard", layout="wide")
+# ===== PAGE CONFIG =====
+st.set_page_config(layout="wide", page_title="Quant IPO RL Dashboard")
+st.title("Quant IPO RL Agent Dashboard")
 
-st.markdown(
-    """
-    <style>
-    .stProgress > div > div > div > div {background-color: #007bff;}
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# Sidebar
+# ===== SIDEBAR NAVIGATION =====
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Select Page", ["Training", "Backtesting"])
+page = st.sidebar.radio("Go to", ["Home", "Data Explorer", "Training", "Backtesting", "Allocation Advisor"])
 
-if page == "Training":
-    st.title("Train PPO Agent for Quant IPO")
+if page == "Home":
+    st.header("Welcome to IPO Allocation AI")
+    st.write("""
+    This dashboard helps you:
+    - 📊 Explore real IPO data
+    - 🏋️ Train a PPO reinforcement learning agent
+    - 📈 Backtest trained models
+    - 💰 Get AI-powered IPO allocation recommendations
+    """)
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Models", len(glob.glob("logs/**/*.zip", recursive=True)))
+    col2.metric("Total Backtests", len(glob.glob("logs/backtest/*.png", recursive=True)))
+    col3.metric("Status", "✅ Ready")
 
-    st.info("Configure your PPO agent training parameters below and monitor real-time logs.")
-
-    with st.form("training_form"):
-        c1, c2, c3 = st.columns(3)
-        timesteps = c1.number_input("Training Timesteps", 1_000, 1_000_000, 100_000, 1_000)
-        m_ipos = c2.slider("Number of IPOs (M)", 2, 20, 8)
-        feature_dim = c3.slider("IPO Feature Dimension", 1, 10, 4)
-
-        c4, c5, c6 = st.columns(3)
-        capital = c4.number_input("Initial Capital", 10_000, 10_000_000, 1_000_000, 10_000)
-        seed = c5.number_input("Random Seed", value=123)
-        delayed_reward = c6.checkbox("Enable Delayed Reward", value=False)
-
-        save_dir = st.text_input("Model Save Directory", "logs/ppo_quant_dashboard")
-
-        submitted = st.form_submit_button("Start Training")
-
-    if submitted:
-        st.subheader("Training Progress")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        stdout_placeholder = st.empty()
-
-        command = [
-            "python", "train_ppo_quant.py",
-            "--timesteps", str(timesteps),
-            "--M", str(m_ipos),
-            "--capital", str(capital),
-            "--feature_dim", str(feature_dim),
-            "--seed", str(seed),
-            "--save-dir", save_dir,
-        ]
-        if delayed_reward:
-            command.append("--delayed_reward True")
-
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-        stdout_output = ""
-        for i, line in enumerate(iter(process.stdout.readline, '')):
-            stdout_output += line
-            stdout_placeholder.text_area("Training Logs", stdout_output, height=300)
-            progress_bar.progress(min((i % 100) / 100, 1.0))
-            status_text.info(f"Processing batch {i}...")
-
-        process.wait()
-        progress_bar.progress(1.0)
-        status_text.success("Training Complete")
-
-        if process.returncode == 0:
-            st.success("Training completed successfully.")
-            st.write(f"Model saved at: `{save_dir}`")
+# ===== DATA EXPLORER PAGE =====
+elif page == "Data Explorer":
+    st.header("IPO Data Explorer")
+    
+    data_source = st.radio("Select Data Source", ["Mock Real Data", "Upload CSV"])
+    
+    try:
+        if data_source == "Upload CSV":
+            uploaded_file = st.file_uploader("Upload IPO CSV", type="csv")
+            if uploaded_file is not None:
+                df = pd.read_csv(uploaded_file)
+                st.session_state.csv_data = df
+            else:
+                st.warning("Please upload a CSV file")
+                st.stop()
         else:
-            st.error("Training failed. Check logs above.")
+            # Use mock data from data_simulator_quant
+            from data_simulator_quant import IPODataSimulator
+            sim = IPODataSimulator(M=20, feature_dim=4, seed=42)
+            features, gains, vols = sim.sample_batch(batch_size=1)
+            df = pd.DataFrame({
+                "IPO_ID": range(1, 21),
+                "Feature_1": features[0][:, 0],
+                "Feature_2": features[0][:, 1],
+                "Feature_3": features[0][:, 2],
+                "Feature_4": features[0][:, 3],
+                "Expected_Gain_%": gains[0] * 100,
+                "Volatility_20D": vols[0],
+            })
+        
+        st.subheader("Data Preview")
+        st.dataframe(df, use_container_width=True)
+        
+        st.subheader("Statistics")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total IPOs", len(df))
+        col2.metric("Avg Expected Gain", f"{df['Expected_Gain_%'].mean():.2f}%")
+        col3.metric("Avg Volatility", f"{df['Volatility_20D'].mean():.4f}")
+        
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
 
-elif page == "Backtesting":
-    st.title("Backtest Trained PPO Agent")
-
-    st.info("Select a trained model and run backtesting to evaluate agent performance.")
-
-    # Find trained models
-    model_files = glob.glob("logs/**/*.zip", recursive=True)
-    model_files = [f for f in model_files if "ppo_quant" in os.path.basename(f)]
-
-    if not model_files:
-        st.warning("No trained models found. Train a model first.")
-    else:
-        with st.form("backtesting_form"):
-            c1, c2, c3 = st.columns(3)
-            model_path = c1.selectbox("Select Model", model_files)
-            episodes = c2.number_input("Backtest Episodes", 1, 1000, 50, 1)
-            m_ipos = c3.slider("Number of IPOs (M)", 2, 20, 8)
-
-            c4, c5, c6 = st.columns(3)
-            capital = c4.number_input("Initial Capital", 10_000, 10_000_000, 1_000_000, 10_000)
-            seed = c5.number_input("Random Seed", value=123)
-            delayed_reward = c6.checkbox("Enable Delayed Reward", value=False)
-
-            logdir = st.text_input("Log Directory", "logs/backtest_dashboard")
-
-            submitted = st.form_submit_button("Start Backtesting")
-
+# ===== TRAINING PAGE =====
+elif page == "Training":
+    st.header("Train PPO Agent")
+    st.write("Configure and train a new PPO agent on IPO allocation task.")
+    
+    with st.form("training_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            timesteps = st.number_input("Training Timesteps", 1000, 1000000, 50000, 1000)
+            m_ipos = st.slider("Number of IPOs (M)", 2, 20, 8)
+            feature_dim = st.slider("Feature Dimension", 1, 10, 4)
+        
+        with col2:
+            capital = st.number_input("Initial Capital ($)", 10000, 10000000, 1000000, 10000)
+            seed = st.number_input("Random Seed", value=123, min_value=1)
+            save_dir = st.text_input("Save Directory", "logs/ppo_models")
+        
+        data_source = st.radio("Data Source", ["Mock Real", "CSV Upload"])
+        csv_path = None
+        
+        if data_source == "CSV Upload":
+            uploaded_file = st.file_uploader("Upload IPO CSV", type="csv", key="train_csv")
+            if uploaded_file:
+                csv_path = uploaded_file.name
+                with open(csv_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+        
+        delayed_reward = st.checkbox("Enable Delayed Reward Mode")
+        submitted = st.form_submit_button("Start Training")
+        
         if submitted:
-            st.subheader("Backtesting Progress")
-            progress_bar = st.progress(0)
-            stdout_placeholder = st.empty()
-            stdout_output = ""
-
-            vecnormalize_path = os.path.join(os.path.dirname(model_path), "vecnormalize.pkl")
-
-            command = [
-                "python", "backtest_quant.py",
-                "--model", model_path,
-                "--episodes", str(episodes),
+            st.info("⏳ Training started in background...")
+            
+            cmd = [
+                "python", "train_ppo_quant.py",
+                "--timesteps", str(timesteps),
                 "--M", str(m_ipos),
                 "--capital", str(capital),
+                "--feature_dim", str(feature_dim),
+                "--seed", str(seed),
+                "--save-dir", save_dir,
+                "--data_source", "mock_real" if data_source == "Mock Real" else "csv",
+            ]
+            
+            if csv_path:
+                cmd.extend(["--csv_path", csv_path])
+            
+            if delayed_reward:
+                cmd.append("--delayed_reward")
+            
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+                
+                if result.returncode == 0:
+                    st.success("Training completed successfully!")
+                    st.info(f"Model saved to: {save_dir}")
+                    
+                    # Show training output
+                    if result.stdout:
+                        with st.expander("Training Output"):
+                            st.code(result.stdout)
+                else:
+                    st.error(f"Training failed:\n{result.stderr}")
+                    
+            except subprocess.TimeoutExpired:
+                st.error("Training timeout (>1 hour)")
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+# ===== BACKTESTING PAGE =====
+elif page == "Backtesting":
+    st.header("Backtest Trained Model")
+    st.write("Evaluate your trained agent on historical/simulated IPO data.")
+    
+    # Find available models
+    model_files = glob.glob("logs/**/*.zip", recursive=True)
+    model_files = [f for f in model_files if "ppo" in os.path.basename(f)]
+    
+    if not model_files:
+        st.warning("No trained models found. Train one first!")
+        st.stop()
+    
+    model_path = st.selectbox("Select Trained Model", model_files)
+    
+    with st.form("backtest_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            episodes = st.slider("Number of Episodes", 1, 100, 20)
+            data_source = st.radio("Data Source", ["Mock Real", "CSV Upload"])
+        
+        with col2:
+            seed = st.number_input("Random Seed", value=42, min_value=1)
+            logdir = st.text_input("Log Directory", "logs/backtest")
+        
+        csv_path = None
+        if data_source == "CSV Upload":
+            uploaded_file = st.file_uploader("Upload IPO CSV", type="csv", key="backtest_csv")
+            if uploaded_file:
+                csv_path = uploaded_file.name
+                with open(csv_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+        
+        submitted = st.form_submit_button("Start Backtest")
+        
+        if submitted:
+            st.info("Backtesting in progress...")
+            
+            cmd = [
+                "python", "backtest_quant.py",
+                "--model", model_path.replace(".zip", ""),
+                "--episodes", str(episodes),
                 "--seed", str(seed),
                 "--logdir", logdir,
+                "--data_source", "mock_real" if data_source == "Mock Real" else "csv",
             ]
-            if os.path.exists(vecnormalize_path):
-                command.extend(["--vecnormalize", vecnormalize_path])
-            if delayed_reward:
-                command.append("--delayed_reward True")
+            
+            if csv_path:
+                cmd.extend(["--csv_path", csv_path])
+            
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                
+                if result.returncode == 0:
+                    st.success("✅ Backtest completed!")
+                    
+                    # Display backtest output
+                    with st.expander("Backtest Output"):
+                        st.code(result.stdout)
+                    
+                    # Look for generated PNG
+                    png_files = glob.glob(os.path.join(logdir, "*.png"))
+                    if png_files:
+                        latest_png = max(png_files, key=os.path.getctime)
+                        st.image(latest_png, caption="Average Wealth Path", use_container_width=True)
+                    
+                else:
+                    st.error(f"Backtest failed:\n{result.stderr}")
+                    
+            except subprocess.TimeoutExpired:
+                st.error("Backtest timeout (>10 min)")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+# ===== ALLOCATION ADVISOR PAGE =====
+elif page == "Allocation Advisor":
+    st.header("💰 AI-Powered IPO Allocation Advisor")
+    st.write("Get AI recommendations for IPO allocation using your trained model.")
+    
+    # Find available models
+    model_files = glob.glob("logs/**/*.zip", recursive=True)
+    model_files = [f for f in model_files if "ppo" in os.path.basename(f)]
+    
+    if not model_files:
+        st.warning("No trained models found. Train one first!")
+        st.stop()
+    
+    model_path = st.selectbox("Select Model for Allocation", model_files)
+    
+    # Load model config
+    config_path = os.path.join(os.path.dirname(model_path), "config.json")
+    config = {}
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            config = json.load(f)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        capital = st.number_input("Your Capital ($)", 100000, 10000000, 1000000, 10000)
+        data_source = st.radio("IPO Data Source", ["Mock Real", "CSV Upload"], key="advisor_data")
+    
+    with col2:
+        num_ipos = st.slider("Number of IPOs to Consider", 2, 20, config.get("M", 8))
+    
+    csv_path = None
+    if data_source == "CSV Upload":
+        uploaded_file = st.file_uploader("Upload IPO CSV", type="csv", key="advisor_csv")
+        if uploaded_file:
+            csv_path = uploaded_file.name
+            with open(csv_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+    
+    if st.button("Get AI Allocation Recommendation"):
+        st.info("Running model prediction...")
+        
+        try:
+            # Create environment
+            def make_env():
+                return QuantIPOEnv(
+                    M=num_ipos,
+                    feature_dim=config.get("feature_dim", 4),
+                    initial_capital=capital,
+                    real_data_source="csv" if csv_path else "mock_real",
+                    csv_path=csv_path,
+                    seed=42
+                )
+            
+            env = DummyVecEnv([make_env])
+            
+            # Load VecNormalize
+            vec_file = os.path.join(os.path.dirname(model_path), "vecnormalize.pkl")
+            if os.path.exists(vec_file):
+                env = VecNormalize.load(vec_file, env)
+                env.training = False
+                env.norm_reward = False
+            
+            # Load model
+            model_file = model_path if model_path.endswith(".zip") else model_path + ".zip"
+            model = PPO.load(model_file)
+            
+            # Get prediction
+            obs = env.reset()
+            action, _ = model.predict(obs, deterministic=True)
+            
+            # Normalize allocations
+            allocation_raw = action[0][:num_ipos]
+            allocation_pct = (allocation_raw / (allocation_raw.sum() + 1e-8)) * 100
+            amounts = (allocation_pct / 100) * capital
+            
+            # Display results
+            st.success("Allocation Generated!")
+            
+            result_df = pd.DataFrame({
+                "IPO": [f"IPO_{i+1}" for i in range(num_ipos)],
+                "Allocation %": allocation_pct,
+                "Amount ($)": amounts,
+                "Action Value": allocation_raw,
+            })
+            
+            st.dataframe(result_df, use_container_width=True)
+            
+            # Pie chart
+            fig, ax = plt.subplots(figsize=(8, 6))
+            non_zero = allocation_pct[allocation_pct > 0.1]
+            if len(non_zero) > 0:
+                ax.pie(non_zero, labels=[f"IPO_{i+1}" for i, pct in enumerate(allocation_pct) if pct > 0.1], 
+                       autopct='%1.1f%%', startangle=90)
+            ax.set_title(f"Recommended IPO Allocation (Total: ${capital:,.0f})")
+            st.pyplot(fig)
+            
+            # Summary metrics
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Allocated", f"${amounts.sum():,.0f}")
+            col2.metric("Num IPOs Selected", len(allocation_pct[allocation_pct > 1]))
+            col3.metric("Max Allocation", f"{allocation_pct.max():.1f}%")
+            
+        except Exception as e:
+            st.error(f"Error getting allocation: {e}")
 
-            for i, line in enumerate(iter(process.stdout.readline, '')):
-                stdout_output += line
-                stdout_placeholder.text_area("Backtesting Logs", stdout_output, height=300)
-                progress_bar.progress(min((i % 100) / 100, 1.0))
 
-            process.wait()
-            progress_bar.progress(1.0)
-            st.success("Backtesting complete.")
-
-            plot_path = os.path.join(logdir, "avg_wealth.png")
-            if os.path.exists(plot_path):
-                st.image(plot_path, caption="Average Wealth Over Time", use_container_width=True)
-            else:
-                st.warning("No plot found in the specified directory.")

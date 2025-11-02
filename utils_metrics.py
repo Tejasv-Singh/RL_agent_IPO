@@ -16,8 +16,7 @@ def annualized_return(wealth: np.ndarray, periods_per_year: int = 252) -> float:
     if num_years == 0:
         return 0.0
     ratio = wealth[-1] / wealth[0]
-    # If ratio is negative, result of exponentiation is NaN. Cap at 0.
-    # This effectively caps the total return at -100%.
+  
     if ratio < 0:
         ratio = 0
     return ratio ** (1 / num_years) - 1.0
