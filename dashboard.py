@@ -104,13 +104,16 @@ elif page == "Training":
                     f.write(uploaded_file.getbuffer())
         
         delayed_reward = st.checkbox("Enable Delayed Reward Mode")
+        esg = st.checkbox("Enable esg")
         submitted = st.form_submit_button("Start Training")
         
         if submitted:
-            st.info("Training started in background...")
+            st.info("Training started...")
+            progress_bar = st.progress(0)
+            output_placeholder = st.empty()
             
             cmd = [
-                "python", "train_ppo_quant.py",
+                "python", "-u", "train_ppo_quant.py",
                 "--timesteps", str(timesteps),
                 "--M", str(m_ipos),
                 "--capital", str(capital),
@@ -125,20 +128,36 @@ elif page == "Training":
             
             if delayed_reward:
                 cmd.append("--delayed_reward")
-            
+
+            full_output = ""
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 
-                if result.returncode == 0:
+                while True:
+                    line = process.stdout.readline()
+                    if not line:
+                        break
+                    
+                    full_output += line
+                    output_placeholder.code(full_output)
+                    
+                    if "total_timesteps" in line:
+                        try:
+                            # Extract the number after "total_timesteps |"
+                            current_timesteps = int(line.split("total_timesteps")[1].split("|")[1].strip())
+                            progress = min(1.0, current_timesteps / timesteps)
+                            progress_bar.progress(progress)
+                        except (ValueError, IndexError):
+                            pass # Ignore parsing errors
+
+                process.wait(timeout=3600)
+
+                if process.returncode == 0:
                     st.success("Training completed successfully!")
                     st.info(f"Model saved to: {save_dir}")
-                    
-                    # Show training output
-                    if result.stdout:
-                        with st.expander("Training Output"):
-                            st.code(result.stdout)
+                    progress_bar.progress(1.0)
                 else:
-                    st.error(f"Training failed:\n{result.stderr}")
+                    st.error(f"Training failed. See output above for details.")
                     
             except subprocess.TimeoutExpired:
                 st.error("Training timeout (>1 hour)")
